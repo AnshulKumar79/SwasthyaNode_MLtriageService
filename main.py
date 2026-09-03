@@ -40,3 +40,21 @@ class ChatResponse(BaseModel):
     is_final: bool
     remedy_suggestion: Optional[str]
     follow_up_question: Optional[str]
+
+
+
+
+#checking the panic_condition in the patient's message
+PANIC_REGEX = re.compile(
+r"\b(help+|bachao|save\s*me|dying|mar\s*raha|emergency|ambulance|choking|unconscious|behosh)\b", 
+re.IGNORECASE
+)
+
+def is_instant_panic(text: str) -> bool:
+    clean = text.lower().strip()
+    words = clean.split()
+    #Detecting spam repetitions like "help help help"
+    if len(words) >= 3 and len(set(words)) <= 2:
+        return True
+    # Match critical keywords
+    return bool(PANIC_REGEX.search(clean))
