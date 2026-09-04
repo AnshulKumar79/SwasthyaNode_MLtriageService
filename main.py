@@ -10,7 +10,8 @@ from groq import Groq
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4
 from pinecone import Pinecone
-import google.generativeai as genai
+import google.genai as genai
+from google.genai import types
 from prompts import TRIAGE_SYSTEM_PROMPT
 from dotenv import load_dotenv
 
@@ -26,7 +27,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 groq_client = Groq(api_key=GROQ_API_KEY)
 pc = Pinecone(api_key=PINECONE_API_KEY)
 pinecone_index = pc.Index("ayush-remedies")
-genai.configure(api_key=GEMINI_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY)
 
 
 chat_sessions = {}
@@ -117,6 +118,28 @@ async def chat_endpoint(req: ChatRequest):
         
         final_zone = triage_zone if is_final else None
         remedy = None
+
+
+        #getting remedies for Green/Orange cases from Pinecone
+        if is_final:
+            if final_zone == "red":
+                follow_up = None
+            elif final_zone in ["green", "orange"]:
+                symptoms_str = " ".join(parsed_llm.get("extracted_symptoms", [req.message]))
+                #Query
+                embedding_result = gemini_client.models.embed_content(
+                    model="gemini-embedding-001",
+                    contents=symptoms_str,
+                    config=types.EmbedContentConfig(
+                        task_type="RETRIEVAL_QUERY",
+                        output_dimensionality=768
+                    )
+                )
+                query_vector = embedding_result.embeddings[0].values
+
+                results = pinecone_index.query(vector=query_vector, top_k=1, include_metadata=True)
+                if results['matches']:
+                    remedy = results['matches'][0]['metadata']['text']
 
         
 
