@@ -1,7 +1,8 @@
 import os
 import time
 from pinecone import Pinecone, ServerlessSpec
-import google.generativeai as genai
+import google.genai as genai
+from google.genai import types
 from dotenv import load_dotenv
 from remedies_list import remedies
 
@@ -14,7 +15,7 @@ if not PINECONE_API_KEY or not GEMINI_API_KEY:
 
 
 pc = Pinecone(api_key=PINECONE_API_KEY)
-genai.configure(api_key=GEMINI_API_KEY)
+gemini_client = genai.Client(api_key=GEMINI_API_KEY) #NEW SDK SYNTAX
 
 #our_remedies_cloud_DB
 index_name = "ayush-remedies"
@@ -44,15 +45,18 @@ print("Converting text to vector embeddings and uploading...")
 vectors_to_upload = []
 
 for item in remedies:
-    result = genai.embed_content(
-        model="models/text-embedding-004",
-        content=item["text"],
-        task_type="retrieval_document"
+    result = gemini_client.models.embed_content(
+        model="gemini-embedding-001",
+        contents=item["text"],
+        config=types.EmbedContentConfig(
+            task_type="RETRIEVAL_DOCUMENT",
+            output_dimensionality=768
+        )
     )
     
     vectors_to_upload.append({
         "id": item["id"],
-        "values": result['embedding'],
+        "values": result.embeddings[0].values,
         "metadata": {"text": item["text"]}
     })
 
