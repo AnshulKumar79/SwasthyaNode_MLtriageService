@@ -3,6 +3,7 @@ import time
 from pinecone import Pinecone, ServerlessSpec
 import google.generativeai as genai
 from dotenv import load_dotenv
+from remedies_list import remedies
 
 load_dotenv()
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
@@ -32,3 +33,28 @@ if index_name not in pc.list_indexes().names():
         time.sleep(2)
 else:
     print(f"Index '{index_name}' already exists.")
+
+
+
+
+index = pc.Index(index_name)
+
+#generating embeddings and uploading onto the index
+print("Converting text to vector embeddings and uploading...")
+vectors_to_upload = []
+
+for item in remedies:
+    result = genai.embed_content(
+        model="models/text-embedding-004",
+        content=item["text"],
+        task_type="retrieval_document"
+    )
+    
+    vectors_to_upload.append({
+        "id": item["id"],
+        "values": result['embedding'],
+        "metadata": {"text": item["text"]}
+    })
+
+index.upsert(vectors=vectors_to_upload)
+print(f"Successfully uploaded {len(vectors_to_upload)} remedies to Pinecone!")
