@@ -12,9 +12,13 @@ from reportlab.lib.pagesizes import A4
 from pinecone import Pinecone
 import google.generativeai as genai
 from prompts import TRIAGE_SYSTEM_PROMPT
+from dotenv import load_dotenv
+
 
 app = FastAPI(title="ML: Updated Triage Chatbot")
 
+
+load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
