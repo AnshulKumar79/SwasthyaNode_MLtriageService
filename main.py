@@ -3,6 +3,7 @@ import io
 import re
 import json
 import base64
+import textwrap
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Optional
@@ -47,6 +48,9 @@ class ChatResponse(BaseModel):
     remedy_suggestion: Optional[str]
     follow_up_question: Optional[str]
 
+class ReportRequest(BaseModel):
+    session_id: str
+
 
 
 
@@ -76,7 +80,11 @@ async def chat_endpoint(req: ChatRequest):
         
         if is_instant_panic(req.message):
             emergency_reply = "EMERGENCY DETECTED: Please stay calm. Contact emergency services or reach the nearest hospital immediately. We are alerting facility personnel."
-            chat_sessions[session_id] = [{"role": "system", "content": "Emergency Panic Triggered"}]
+            chat_sessions[session_id] = [
+                {"role": "user", "content": req.message},
+                {"role": "assistant", "content": emergency_reply},
+                {"role": "summary", "zone": "RED", "symptoms": "Critical distress detected", "remedy": "Immediate emergency care required."}
+            ]
             return ChatResponse(
                 success=True,
                 session_id=session_id,
@@ -95,14 +103,20 @@ async def chat_endpoint(req: ChatRequest):
 
         
         completion = groq_client.chat.completions.create(
-            model="llama-3.1-8b-instant",
+            model="qwen/qwen3.8-27b",
             messages=chat_sessions[session_id],
             response_format={"type": "json_object"},
-            temperature=0.2,
-            max_tokens=250
+            temperature=0.1,
+            max_tokens=800
         )
+
+
+
+        raw_llm = completion.choices[0].message.content.strip()
+        if raw_llm.startswith("```"):
+            raw_llm = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_llm, flags=re.IGNORECASE)
         
-        parsed_llm = json.loads(completion.choices[0].message.content)
+        parsed_llm = json.loads(raw_llm)
         triage_zone = parsed_llm.get("triage_zone", "green").lower()
         reply_text = parsed_llm.get("reply_to_patient", "Could you describe what you are feeling?")
         follow_up = parsed_llm.get("follow_up_question")
@@ -141,6 +155,12 @@ async def chat_endpoint(req: ChatRequest):
                 if results['matches']:
                     remedy = results['matches'][0]['metadata']['text']
 
+            chat_sessions[session_id].append({
+                "role": "summary",
+                "zone": final_zone.upper() if final_zone else "RED",
+                "symptoms": symptoms_str if 'symptoms_str' in locals() else " ".join(parsed_llm.get("extracted_symptoms", [])),
+                "remedy": remedy or "Immediate emergency care required."
+            })
         
 
         return ChatResponse(
@@ -157,9 +177,89 @@ async def chat_endpoint(req: ChatRequest):
         return ChatResponse(
             success=False,
             session_id=req.session_id or "unknown",
-            reply="We are experiencing a temporary error. If this is an emergency, please visit the nearest hospital.",
+            reply=f"PYTHON ERROR: {str(e)}",
             zone="red",  # Fail-safe: errors in triage default to high alert
             is_final=True,
             remedy_suggestion=None,
             follow_up_question=None
         )
+
+
+
+
+
+#pdf-report generation endpoint
+@app.post("/ml/generate-report")
+async def generate_report(req: ReportRequest):
+    try:
+        if req.session_id not in chat_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        session_data = chat_sessions[req.session_id]
+        
+        history = [msg for msg in session_data if msg.get("role") not in ["system", "summary"]]
+        summary = next((msg for msg in session_data if msg.get("role") == "summary"), None)
+
+        pdf_buffer = io.BytesIO()
+        pdf = canvas.Canvas(pdf_buffer, pagesize=A4)
+        
+        #text wrapping
+        def draw_wrapped_text(c, text, x, y, max_width=80):
+            lines = textwrap.wrap(text, width=max_width)
+            for line in lines:
+                c.drawString(x, y, line)
+                y -= 18
+            return y
+
+        #header
+        pdf.setFont("Helvetica-Bold", 16)
+        y = 800
+        pdf.drawString(50, y, f"Health Triage Report (Session: {req.session_id})")
+        y -= 30
+        
+
+        #clinical summary
+        if summary:
+            pdf.setFont("Helvetica-Bold", 14)
+            pdf.drawString(50, y, "Clinical Summary")
+            y -= 20
+            
+            pdf.setFont("Helvetica", 12)
+            y = draw_wrapped_text(pdf, f"Triage Zone: {summary.get('zone', 'UNKNOWN')}", 50, y)
+            y = draw_wrapped_text(pdf, f"Extracted Symptoms: {summary.get('symptoms', 'N/A')}", 50, y)
+            y = draw_wrapped_text(pdf, f"Recommended Action: {summary.get('remedy', 'N/A')}", 50, y)
+            
+            # Draw a divider line
+            pdf.line(50, y, 550, y)
+            y -= 25
+
+        #conversation history
+        pdf.setFont("Helvetica-Bold", 14)
+        pdf.drawString(50, y, "Consultation Transcript")
+        y -= 20
+        
+        pdf.setFont("Helvetica", 12)
+        for msg in history:
+            prefix = "Patient: " if msg["role"] == "user" else "AI Assistant: "
+            text = prefix + msg["content"]
+            
+            y = draw_wrapped_text(pdf, text, 50, y, max_width=85)
+            y -= 5
+            
+            if y < 50:
+                pdf.showPage()
+                pdf.setFont("Helvetica", 12)
+                y = 800
+                
+        pdf.showPage()
+        pdf.save()
+        
+        pdf_base64 = base64.b64encode(pdf_buffer.getvalue()).decode('utf-8')
+        
+        return {
+            "success": True,
+            "pdf_base64": pdf_base64,
+            "filename": f"triage-report-{req.session_id}.pdf"
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
