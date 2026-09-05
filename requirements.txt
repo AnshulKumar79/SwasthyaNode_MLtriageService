@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+groq
+reportlab
+pinecone
+google-genai
+python-dotenv
