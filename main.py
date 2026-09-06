@@ -95,6 +95,21 @@ async def chat_endpoint(req: ChatRequest):
                 follow_up_question=None
             )
 
+
+
+        #stopping further chat if the session is already closed
+        if session_id in chat_sessions:
+            is_already_closed = any(msg.get("role") == "summary" for msg in chat_sessions[session_id])
+            if is_already_closed:
+                return ChatResponse(
+                    success=True,
+                    session_id=session_id,
+                    reply="Your triage session is already completed. Please download your report.",
+                    zone=None, 
+                    is_final=True,
+                    remedy_suggestion=None,
+                    follow_up_question=None
+                )
         
         if session_id not in chat_sessions:
             chat_sessions[session_id] = [{"role": "system", "content": TRIAGE_SYSTEM_PROMPT}]
@@ -102,9 +117,13 @@ async def chat_endpoint(req: ChatRequest):
         chat_sessions[session_id].append({"role": "user", "content": req.message})
 
         
+        valid_api_messages = [
+            msg for msg in chat_sessions[session_id] 
+            if msg.get("role") in ["system", "user", "assistant"]
+        ]
         completion = groq_client.chat.completions.create(
             model="qwen/qwen3.8-27b",
-            messages=chat_sessions[session_id],
+            messages=valid_api_messages,
             response_format={"type": "json_object"},
             temperature=0.1,
             max_tokens=800
